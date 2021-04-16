@@ -422,7 +422,7 @@ def get_W7X_vessel(phi=[0], nz=256):
         # r, z = [all_vertices[sorted_indices][::4,0], all_vertices[sorted_indices][::4,1]]
 
         Path = path.Path(all_vertices, closed=True)
-        r, z = [all_vertices[::3, 0], all_vertices[::3, 1]]
+        r, z = [all_vertices[:, 0], all_vertices[:, 1]]
         line = zb.rzline.line_from_points(r, z)
         line = line.equallySpaced(n=nz)
         lines.append(line)

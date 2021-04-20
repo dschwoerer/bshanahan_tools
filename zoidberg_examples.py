@@ -321,7 +321,7 @@ def W7X(
 
     if calc_curvature:
         print("calculating curvature...")
-        calc_curvilinear_curvature(fname, field, grid)
+        calc_curvilinear_curvature(fname, field, grid, maps)
 
     if calc_curvature and smooth_curvature:
         smooth_metric(

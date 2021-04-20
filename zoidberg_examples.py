@@ -261,7 +261,7 @@ def W7X(
         outer_lines = get_VMEC_surfaces(phi=ycoords, s=1, npoints=nz, w7x_run=vmec_url)
     elif outer_vessel:
         print("Aligning to plasma vessel (EXPERIMENTAL) ...")
-        outer_lines = get_W7X_vessel(phi=ycoords, nz=nz)
+        outer_lines = get_W7X_vessel(phi=ycoords, nz=nz * 2)
     elif outer_vacuum or inner_vacuum:
         xmin = 4.05
         xmax = 4.05 + 2.5
@@ -382,6 +382,11 @@ def get_W7X_vessel(phi=[0], nz=256):
     # add references to single components, in this case ports
     w1 = srv2.types.SurfaceMeshWrap()
     ref = srv2.types.DataReference()
+    # 371 is a vessel that includes approximations of divertor and
+    # other first wall components. From a first look it doesn't seem
+    # to be a high fidelity model, so maybe further improvements are
+    # needed.
+    # http://esb.ipp-hgw.mpg.de:8280/services/ComponentsDbRest/component/371/info
     ref.dataId = "371"  # component id
     w1.reference = ref
     # w2 = srv2.types.SurfaceMeshWrap()
@@ -398,7 +403,6 @@ def get_W7X_vessel(phi=[0], nz=256):
         R = np.zeros((len(result)))
         z = np.zeros((len(result)))
 
-        # plotting
         for s, i in zip(
             result, np.arange(0, len(result))
         ):  # loop over non-empty triangle intersections
@@ -423,7 +427,7 @@ def get_W7X_vessel(phi=[0], nz=256):
 
         Path = path.Path(all_vertices, closed=True)
         r, z = [all_vertices[:, 0], all_vertices[:, 1]]
-        line = zb.rzline.line_from_points(r, z)
+        line = zb.rzline.line_from_points(r, z, k=1)
         line = line.equallySpaced(n=nz)
         lines.append(line)
 

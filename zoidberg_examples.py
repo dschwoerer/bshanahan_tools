@@ -302,7 +302,7 @@ def W7X(
 
     print("creating grid...")
     poloidal_grid = [
-        zb.poloidal_grid.grid_elliptic(inner, outer, nx, nz, show=show_maps)
+        zb.poloidal_grid.grid_elliptic(inner, outer, nx, nz, show=show_maps, nx_outer=2)
         for inner, outer in zip(inner_lines, outer_lines)
     ]
 

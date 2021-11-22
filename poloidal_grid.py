@@ -77,11 +77,11 @@ def _togen(*args):
     return gen_name(*args), args
 
 
-togen = {}
+grids = {}
 for mode in range(5):
-    togen[modes[mode][0]] = [_togen(4, 2, nz, 1, 0.1, 0.5, mode) + (nz,) for nz in lst]
+    grids[modes[mode][0]] = [_togen(4, 2, nz, 1, 0.1, 0.5, mode) + (nz,) for nz in lst]
 
 if __name__ == "__main__":
-    for todos in togen.values():
-        for fn, args in todos:
+    for todos in grids.values():
+        for fn, args, nz in todos:
             gen_grid(*args)

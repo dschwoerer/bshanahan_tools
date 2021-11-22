@@ -1,65 +1,22 @@
-import boutcore as bc
-import xarray as xr
-import matplotlib.pyplot as plt
-from mpl_toolkits.axes_grid1 import make_axes_locatable
-import numpy as np
-
-from mms_helper import extend, clean, lst
+from mms_helper import extend, do_tests, plt, bc, np
 from radial_grid import grids
 
 
-def test(fn):
-    grid = xr.open_dataset(fn)
-    bc.Options().set("mesh:file", fn, force=True)
-    mesh = bc.Mesh(section="")
-    # print(bc.__file__)
-    # print()
-    # print()
-    f = bc.create3D("0", mesh)
-    r = extend(grid.r_minor)
-    Z = extend(grid.Z)
-    one = np.ones_like(Z)
+set1 = (
+    lambda grid: np.sin(extend(grid.r_minor)),
+    lambda grid: np.cos(extend(grid.r_minor)),
+)
 
-    if 0:
-        inp = r ** 3  # np.sin(r)
-        ana = 3 * r ** 2  # np.cos(r)
-    else:
-        inp = np.sin(r)
-        ana = np.cos(r)
-
-    # Set input field
-    f[:, :, :] = inp
-    mesh.communicate(f)
-    calc = bc.DDX(f).get()
-    l2 = np.sqrt(np.mean(clean(ana - calc)[1:-1] ** 2))
-    ## print(fn, l2)
-    #
-    if 0:
-        fig, axs = plt.subplots(1, 3)
-        calcd = clean(calc)[:, 1]
-        anad = ana[:, 1]
-        for dat, label, ax in zip(
-            [anad, calcd, (calcd - anad)], ["ana", "calc", "err"], axs
-        ):
-            plot = ax.imshow(dat[2:-2, 1:-1])
-            ax.set_title(fn[-20:] + " " + label)
-            divider = make_axes_locatable(ax)
-            cax = divider.append_axes("right", size="5%", pad=0.05)
-            plt.colorbar(plot, cax=cax, orientation="vertical")
-    return l2
+set2 = (
+    lambda grid: extend(grid.r_minor) ** 3,
+    lambda grid: 3 * extend(grid.r_minor) ** 2,
+)
 
 
 if __name__ == "__main__":
     bc.init("-d mms -q -q -q")
 
-    for mode, todo in grids.items():
-        l2 = [test(x[0]) for x in todo]
-        lst = [x[-1] for x in todo]
-
-        errc = np.log(l2[-2] / l2[-1])
-        difc = np.log(lst[-1] / lst[-2])
-        conv = errc / difc
-        print(mode, conv, l2)
+    do_tests(grids, *set1, bc.DDX)
+    do_tests(grids, *set2, bc.DDX)
 
     plt.show()
-# for x in lst:

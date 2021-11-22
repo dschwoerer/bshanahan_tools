@@ -14,7 +14,7 @@ def gen_name(*args):
     return f"radial_{modes[mode][0]}_{nx}_{ny}_{nz}_{R0}.fci.nc"
 
 
-def gen_grid_const(nx, ny, nz, R0, r0, r1, mode=0):
+def gen_grid(nx, ny, nz, R0, r0, r1, mode=0):
     mode = modes[mode]
     one = np.ones((nx, ny, nz))
     r = mode[1](r0, r1, nx)[:, None]
@@ -60,5 +60,5 @@ for mode in range(2):
 
 if __name__ == "__main__":
     for todos in grids.values():
-        for fn, args in todos:
+        for fn, args, _ in todos:
             gen_grid(*args)

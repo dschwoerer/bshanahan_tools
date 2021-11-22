@@ -1,0 +1,14 @@
+MXG = 1
+MYG = 1
+
+[mesh]
+MXG = 1
+MYG = 1
+
+file = "rotating-ellipse.4x4x4.fci.fix.nc"
+
+extrapolate_y = false
+
+[mesh:paralleltransform]
+type = fci
+

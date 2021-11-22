@@ -27,14 +27,23 @@ def var4(*args):
     return pos + np.sin(pos) / 2 * nonlin
 
 
-def gen_grid(nx, ny, nz, R0, r0, r1, mode=0):
-    mode = [
-        ("const", np.linspace),
-        ("var1", var1),
-        ("var2", var2),
-        ("var3", var3),
-        ("var4", var4),
-    ][mode]
+modes = [
+    ("const", np.linspace),
+    ("var1", var1),
+    ("var2", var2),
+    ("var3", var3),
+    ("var4", var4),
+]
+
+
+def gen_name(*args):
+    nx, ny, nz, R0, r0, r1, mode = args
+    return f"poloidal_{modes[mode][0]}_{nx}_{ny}_{nz}_{R0}.fci.nc"
+
+
+def gen_grid(*args):
+    nx, ny, nz, R0, r0, r1, mode = args
+    mode = modes[mode]
     one = np.ones((nx, ny, nz))
     r = np.linspace(r0, r1, nx)[:, None]
     theta = mode[1](0, 2 * np.pi, nz, False)[None, :]
@@ -46,7 +55,7 @@ def gen_grid(nx, ny, nz, R0, r0, r1, mode=0):
     field = zb.field.CurvedSlab(Bz=0, Bzprime=0, Rmaj=R0)
     grid = zb.grid.Grid(pol_grid, phi, 5, yperiodic=True)
 
-    fn = f"poloidal_{mode[0]}_{nx}_{ny}_{nz}_{R0}.fci.nc"
+    fn = gen_name(*args)
 
     maps = zb.make_maps(grid, field, quiet=True)
     zb.write_maps(
@@ -64,7 +73,15 @@ def gen_grid(nx, ny, nz, R0, r0, r1, mode=0):
         ds.to_netcdf(fn)
 
 
-for nz in lst:
-    for mode in range(5):
-        gen_grid(4, 2, nz, 1, 0.1, 0.5, mode=mode)
-        # gen_grid_const(4, 2, nz, 2, 0.1, 1.1, mode=mode)
+def _togen(*args):
+    return gen_name(*args), args
+
+
+togen = {}
+for mode in range(5):
+    togen[modes[mode][0]] = [_togen(4, 2, nz, 1, 0.1, 0.5, mode) + (nz,) for nz in lst]
+
+if __name__ == "__main__":
+    for todos in togen.values():
+        for fn, args in todos:
+            gen_grid(*args)

@@ -5,6 +5,7 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 import numpy as np
 
 from mms_helper import extend, clean, lst
+from poloidal_grid import grids
 
 
 def test(fn):
@@ -50,9 +51,14 @@ def test(fn):
 if __name__ == "__main__":
     bc.init("-d mms -q -q -q")
 
-    for mode in "const", "var1", "var2", "var3", "var4":
-        l2 = [test(f"poloidal_{mode}_4_2_{x}_1.fci.nc") for x in lst]
-        print(l2)
+    for mode, todo in grids.items():
+        l2 = [test(x[0]) for x in todo]
+        lst = [x[-1] for x in todo]
+
+        errc = np.log(l2[-2] / l2[-1])
+        difc = np.log(lst[-1] / lst[-2])
+        conv = errc / difc
+        print(mode, conv, l2)
 
     plt.show()
 # for x in lst:

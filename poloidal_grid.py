@@ -70,6 +70,7 @@ def gen_grid(*args):
         ds["r_minor"] = dims, one * r[:, None, :]
         ds["phi"] = "y", phi
         ds["theta"] = dims, one * theta[:, None, :]
+        ds["one"] = dims, one
         ds.to_netcdf(fn)
 
 
@@ -83,5 +84,5 @@ for mode in range(5):
 
 if __name__ == "__main__":
     for todos in grids.values():
-        for fn, args, nz in todos:
+        for fn, args, _ in todos:
             gen_grid(*args)

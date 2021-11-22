@@ -3,22 +3,28 @@ import numpy as np
 import xarray as xr
 from mms_helper import lst
 
+
+ident = lambda a, b: a
+
+varx = lambda t, x: (t + x) % (2 * np.pi)
+
 modes = [
-    ("const", np.linspace),
-    ("exp", np.geomspace),
+    ("const", ident, ident),
+    ("varx", ident, varx),
 ]
 
 
 def gen_name(*args):
     nx, ny, nz, R0, r0, r1, mode = args
-    return f"radial_{modes[mode][0]}_{nx}_{ny}_{nz}_{R0}.fci.nc"
+    return f"parallel_{modes[mode][0]}_{nx}_{ny}_{nz}_{R0}.fci.nc"
 
 
 def gen_grid(nx, ny, nz, R0, r0, r1, mode=0):
     mode = modes[mode]
     one = np.ones((nx, ny, nz))
-    r = mode[1](r0, r1, nx)[:, None]
+    r = np.linspace(r0, r1, nx)[:, None]
     theta = np.linspace(0, 2 * np.pi, nz, False)[None, :]
+    r, theta = mode[1](r, theta), mode[2](theta, r)
     phi = np.linspace(0, 2 * np.pi / 5, ny, False)
     R = R0 + np.cos(theta) * r
     Z = np.sin(theta) * r
@@ -51,13 +57,8 @@ def _togen(*args):
 
 
 grids = {}
-for mode in range(2):
-    grids[modes[mode][0] + "1"] = [
-        _togen(nz, 2, 4, 1, 0.1, 0.5, mode) + (nz,) for nz in lst
-    ]
-    grids[modes[mode][0] + "2"] = [
-        _togen(nz, 2, 4, 2, 0.1, 1.1, mode) + (nz,) for nz in lst
-    ]
+for mode in range(len(modes)):
+    grids[modes[mode][0]] = [_togen(8, nz, 4, 1, 0.1, 0.5, mode) + (nz,) for nz in lst]
 
 if __name__ == "__main__":
     for todos in grids.values():

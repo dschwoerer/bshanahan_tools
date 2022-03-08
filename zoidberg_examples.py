@@ -4,6 +4,7 @@ from boututils.datafile import DataFile
 import boututils.calculus as calc
 import matplotlib.pyplot as plt
 import random
+import time
 
 
 def screwpinch(
@@ -247,12 +248,22 @@ def W7X(
     npoints=100,
     a=2.5,
     show_maps=False,
+        show_lines=False,
     calc_curvature=True,
     smooth_curvature=False,
     plasma_field=False,
     configuration=0,
-    vmec_url="http://svvmec1.ipp-hgw.mpg.de:8080/vmecrest/v1/w7x_ref_171/wout.nc",
+    vmec_url=None,
+    field_refine=1
 ):
+
+    if vmec_url is None:
+        urls = {0:"http://svvmec1.ipp-hgw.mpg.de:8080/vmecrest/v1/w7x_ref_171/wout.nc",
+                4:"http://svvmec1.ipp-hgw.mpg.de:8080/vmecrest/v1/geiger/w7x/1000_1000_1000_1000_-0690_-0690/01/00/wout.nc",}
+        if configuration not in urls:
+            raise KeyError("Do not know the appropriate vmec url for that configuartion.\n"
+                           "Check http://svvmec1.ipp-hgw.mpg.de:8080/vmecrest/v1/geiger/w7x/")
+        vmec_url = urls[configuration]
 
     yperiod = 2 * np.pi / 5.0
     ycoords = np.linspace(0.0, yperiod, ny, endpoint=False)
@@ -261,7 +272,8 @@ def W7X(
         outer_lines = get_VMEC_surfaces(phi=ycoords, s=1, npoints=nz, w7x_run=vmec_url)
     elif outer_vessel:
         print("Aligning to plasma vessel (EXPERIMENTAL) ...")
-        outer_lines = get_W7X_vessel(phi=ycoords, nz=nz * 2)
+        with timeit(" ... took %f"):
+            outer_lines = get_W7X_vessel(phi=ycoords, nz=nz * 10)
     elif outer_vacuum or inner_vacuum:
         xmin = 4.05
         xmax = 4.05 + 2.5
@@ -294,29 +306,48 @@ def W7X(
     zmin = np.min([min(outer_lines[i].Z) for i in range(ny)])
     zmax = np.max([max(outer_lines[i].Z) for i in range(ny)])
 
+    with timeit("Creating a field took %f"):
+        if field_refine:
+            field = zb.field.W7X_vacuum(
+                *[x * field_refine for x in (128,32,128)],
+                phimax=2 * np.pi / 5.0,
+                x_range=[xmin, xmax],
+                z_range=[zmin, zmax],
+                include_plasma_field=plasma_field,
+                configuration=configuration,
+            )
+        else:
+            field = zb.field.W7X_vacuum_on_demand(configuration)
+
     if inner_VMEC:
         print("Aligning to inner VMEC flux surface...")
-        inner_lines = get_VMEC_surfaces(
-            phi=ycoords, s=0.67, npoints=nz, w7x_run=vmec_url
-        )
+        with timeit(" ... took %f"):
+            inner_lines = get_VMEC_surfaces(
+                phi=ycoords, s=0.67, npoints=nz*2, w7x_run=vmec_url
+            )
+    if show_lines:
+        for i in range(ny):
+            plt.figure()
+            plt.plot(*inner_lines[i].position(np.linspace(0, 2 * np.pi, 10*nz)), label="inner")
+            plt.plot(*inner_lines[i].position(np.linspace(0, 2 * np.pi, 10*nz)), label="outer")
+            plt.legend()
+            plt.title(i)
+        plt.show()
+
 
     print("creating grid...")
-    poloidal_grid = [
-        zb.poloidal_grid.grid_elliptic(inner, outer, nx, nz, show=show_maps, nx_outer=2)
-        for inner, outer in zip(inner_lines, outer_lines)
-    ]
+    with timeit("Creating poloidal grids took %f"):
+        poloidal_grid = [
+            zb.poloidal_grid.grid_elliptic(inner, outer, nx, nz, show=show_maps, nx_outer=2)
+            for inner, outer in zip(inner_lines, outer_lines)
+        ]
 
     # Create the 3D grid by putting together 2D poloidal grids
-    grid = zb.grid.Grid(poloidal_grid, ycoords, yperiod, yperiodic=True)
+    with timeit("Creating a grid took %f"):
+        grid = zb.grid.Grid(poloidal_grid, ycoords, yperiod, yperiodic=True)
 
-    field = zb.field.W7X_vacuum(
-        phimax=2 * np.pi / 5.0,
-        x_range=[xmin, xmax],
-        z_range=[zmin, zmax],
-        include_plasma_field=plasma_field,
-    )
-
-    maps = zb.make_maps(grid, field)
+    with timeit("Creating maps took %f"):
+        maps = zb.make_maps(grid, field, field_tracer=zb.fieldtracer.FieldTracerWeb(configId=configuration, stepsize=0.01))
     zb.write_maps(grid, field, maps, str(fname), metric2d=False)
 
     if calc_curvature:
@@ -362,15 +393,15 @@ def get_VMEC_surfaces(phi=[0], s=0.75, w7x_run="w7x_ref_1", npoints=100):
     lines = []
     for y in range(len(phi)):
         r, z = points[y].x1, points[y].x3
-        line = zb.rzline.line_from_points(r, z)
+        line = zb.rzline.line_from_points(r, z, is_sorted=True)
         line = line.equallySpaced()
         lines.append(line)
 
     return lines
 
 
-### Return the W7X PFC as a RZline object
-def get_W7X_vessel(phi=[0], nz=256):
+### Return the W7X PFC as RZline objects
+def get_W7X_vessel(phi=[0], nz=256, show=False):
     from osa import Client
     import matplotlib.path as path
 
@@ -411,23 +442,21 @@ def get_W7X_vessel(phi=[0], nz=256):
             z[i] = xyz[:, 2][0]
             all_vertices[i, :] = (R[i], z[i])
 
-        # now have all vertices of vessel, but need to put them in sensible order...
-
-        # find magnetic axis
-        # axis_line = get_VMEC_surfaces(phi=[phi[y]],s=0,npoints=20)
-        # axis = [axis_line[0].R[0], axis_line[0].Z[0]]
-
-        # loc = np.asarray([all_vertices[:,0] - axis[0], all_vertices[:,1] - axis[1]])
-
-        # theta = np.arctan2(loc[1,:],loc[0,:])
-
-        # sorted_indices = sorted(range(len(theta)), key=lambda k: theta[k])
-
-        # r, z = [all_vertices[sorted_indices][::4,0], all_vertices[sorted_indices][::4,1]]
+        # Now have all vertices of vessel, but need to put them in sensible order...
+        # Done by line_from_points :-)
 
         Path = path.Path(all_vertices, closed=True)
         r, z = [all_vertices[:, 0], all_vertices[:, 1]]
-        line = zb.rzline.line_from_points(r, z, k=1)
+        line = zb.rzline.line_from_points(r, z, spline_order=1, is_sorted=False)
+        if show:
+            plt.plot(*all_vertices.T, "xr")
+        
+            for o in 0,1,2,3,5:
+                plt.plot(*zb.rzline.line_from_points(r, z, spline_order=o).position(np.linspace(0, 2 * np.pi, 10*nz)), label=o)
+            plt.plot(*line.position(np.linspace(0, 2 * np.pi, 10*nz)), label="before")
+            plt.plot(*line.equallySpaced(n=nz).position(np.linspace(0, 2 * np.pi, 10*nz)), label="equally spaced")
+            plt.legend()
+            plt.show()
         line = line.equallySpaced(n=nz)
         lines.append(line)
 
@@ -656,6 +685,16 @@ def plot_maps(field, grid, maps, yslice=0):
     plt.plot(R_next, Z_next, "o")
 
     plt.show()
+
+class timeit(object):
+    def __init__(self, info="%f"):
+        self.info = info
+
+    def __enter__(self):
+        self.t0 = time.time()
+
+    def __exit__(self, *args):
+        print(self.info % (time.time() - self.t0))
 
 
 if __name__ == "__main__":

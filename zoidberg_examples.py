@@ -248,21 +248,26 @@ def W7X(
     npoints=100,
     a=2.5,
     show_maps=False,
-        show_lines=False,
+    show_lines=False,
     calc_curvature=True,
     smooth_curvature=False,
     plasma_field=False,
     configuration=0,
     vmec_url=None,
-    field_refine=1
+    field_refine=1,
+    trace_web=True,
 ):
 
     if vmec_url is None:
-        urls = {0:"http://svvmec1.ipp-hgw.mpg.de:8080/vmecrest/v1/w7x_ref_171/wout.nc",
-                4:"http://svvmec1.ipp-hgw.mpg.de:8080/vmecrest/v1/geiger/w7x/1000_1000_1000_1000_-0690_-0690/01/00/wout.nc",}
+        urls = {
+            0: "http://svvmec1.ipp-hgw.mpg.de:8080/vmecrest/v1/w7x_ref_171/wout.nc",
+            4: "http://svvmec1.ipp-hgw.mpg.de:8080/vmecrest/v1/geiger/w7x/1000_1000_1000_1000_-0690_-0690/01/00/wout.nc",
+        }
         if configuration not in urls:
-            raise KeyError("Do not know the appropriate vmec url for that configuartion.\n"
-                           "Check http://svvmec1.ipp-hgw.mpg.de:8080/vmecrest/v1/geiger/w7x/")
+            raise KeyError(
+                "Do not know the appropriate vmec url for that configuartion.\n"
+                "Check http://svvmec1.ipp-hgw.mpg.de:8080/vmecrest/v1/geiger/w7x/"
+            )
         vmec_url = urls[configuration]
 
     yperiod = 2 * np.pi / 5.0
@@ -309,7 +314,7 @@ def W7X(
     with timeit("Creating a field took %f"):
         if field_refine:
             field = zb.field.W7X_vacuum(
-                *[x * field_refine for x in (128,32,128)],
+                *[x * field_refine for x in (128, 32, 128)],
                 phimax=2 * np.pi / 5.0,
                 x_range=[xmin, xmax],
                 z_range=[zmin, zmax],
@@ -323,22 +328,29 @@ def W7X(
         print("Aligning to inner VMEC flux surface...")
         with timeit(" ... took %f"):
             inner_lines = get_VMEC_surfaces(
-                phi=ycoords, s=0.67, npoints=nz*2, w7x_run=vmec_url
+                phi=ycoords, s=0.67, npoints=nz * 2, w7x_run=vmec_url
             )
     if show_lines:
         for i in range(ny):
             plt.figure()
-            plt.plot(*inner_lines[i].position(np.linspace(0, 2 * np.pi, 10*nz)), label="inner")
-            plt.plot(*inner_lines[i].position(np.linspace(0, 2 * np.pi, 10*nz)), label="outer")
+            plt.plot(
+                *inner_lines[i].position(np.linspace(0, 2 * np.pi, 10 * nz)),
+                label="inner",
+            )
+            plt.plot(
+                *inner_lines[i].position(np.linspace(0, 2 * np.pi, 10 * nz)),
+                label="outer",
+            )
             plt.legend()
             plt.title(i)
         plt.show()
 
-
     print("creating grid...")
     with timeit("Creating poloidal grids took %f"):
         poloidal_grid = [
-            zb.poloidal_grid.grid_elliptic(inner, outer, nx, nz, show=show_maps, nx_outer=2)
+            zb.poloidal_grid.grid_elliptic(
+                inner, outer, nx, nz, show=show_maps, nx_outer=2
+            )
             for inner, outer in zip(inner_lines, outer_lines)
         ]
 
@@ -347,7 +359,13 @@ def W7X(
         grid = zb.grid.Grid(poloidal_grid, ycoords, yperiod, yperiodic=True)
 
     with timeit("Creating maps took %f"):
-        maps = zb.make_maps(grid, field, field_tracer=zb.fieldtracer.FieldTracerWeb(configId=configuration, stepsize=0.01))
+        tracer = (
+            zb.fieldtracer.FieldTracerWeb(configId=configuration, stepsize=0.01)
+            if trace_web
+            else None
+        )
+        print(tracer)
+        maps = zb.make_maps(grid, field, field_tracer=tracer)
     zb.write_maps(grid, field, maps, str(fname), metric2d=False)
 
     if calc_curvature:
@@ -402,6 +420,21 @@ def get_VMEC_surfaces(phi=[0], s=0.75, w7x_run="w7x_ref_1", npoints=100):
 
 ### Return the W7X PFC as RZline objects
 def get_W7X_vessel(phi=[0], nz=256, show=False):
+    import hashlib
+
+    m = hashlib.md5()
+    m.update("-".join([str(x) for x in phi]).encode())
+    fn = f"w7x_vessel_{nz}_{m.hexdigest()[:10]}.cache"
+    try:
+        dat = np.loadtxt(fn)
+        dat.shape = (-1, 2, dat.shape[-1])
+        lines = [
+            zb.rzline.line_from_points(*d, spline_order=1, is_sorted=True) for d in dat
+        ]
+        print("using cache")
+        return lines
+    except:
+        pass
     from osa import Client
     import matplotlib.path as path
 
@@ -460,6 +493,10 @@ def get_W7X_vessel(phi=[0], nz=256, show=False):
         line = line.equallySpaced(n=nz)
         lines.append(line)
 
+    dat = [(line.R, line.Z) for line in lines]
+    dat = np.array(dat)
+    dat.shape = (-1, dat.shape[-1])
+    np.savetxt(fn, dat)
     return lines
 
 
@@ -685,6 +722,7 @@ def plot_maps(field, grid, maps, yslice=0):
     plt.plot(R_next, Z_next, "o")
 
     plt.show()
+
 
 class timeit(object):
     def __init__(self, info="%f"):

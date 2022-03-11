@@ -26,6 +26,7 @@ def gen(conf, shape, **kw):
             outer_vessel=True,
             inner_VMEC=True,
             configuration=conf,
+            calc_curvature=False,
             fname=fn,
             **kw,
         )
@@ -87,3 +88,9 @@ if "16" in sys.argv:
 if "17" in sys.argv:
     with timeit():
         gen(4, (256 + 4, 72, 1024), show_maps=False, field_refine=0)
+if "18" in sys.argv:
+    with timeit():
+        gen(0, (64 + 4, 36, 128), show_maps=False, field_refine=1, trace_web=False)
+if "19" in sys.argv:
+    with timeit():
+        gen(0, (64 + 4, 72, 128), show_maps=False, field_refine=0)

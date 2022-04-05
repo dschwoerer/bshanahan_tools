@@ -1,10 +1,14 @@
 import zoidberg as zb
 import numpy as np
 from boututils.datafile import DataFile
+from multiprocessing import Pool
+from functools import partial
 import boututils.calculus as calc
 import matplotlib.pyplot as plt
 import random
 import time
+import hashlib
+
 
 
 def screwpinch(
@@ -330,6 +334,187 @@ def W7X(
             inner_lines = get_VMEC_surfaces(
                 phi=ycoords, s=0.67, npoints=nz * 2, w7x_run=vmec_url
             )
+            
+    tracer = (
+        zb.fieldtracer.FieldTracerWeb(configId=configuration, stepsize=0.01)
+        if trace_web
+        else None
+    )
+    if 1 or avoid_double_outer:
+        print("Avoid double bndr")
+        import eudist
+        
+        outer_lines
+        def trace(outer_lines, i):
+            m = hashlib.md5()
+            m.update("-".join([str(x) for x in ycoords]).encode())
+            fn0 = fn = f"w7x_vessel_{nz}_{m.hexdigest()[:10]}"
+            fn = f"{fn0}.iter{i}.cache"
+            try:
+                dat = np.loadtxt(fn)
+                dat.shape = (2, -1, 2, dat.shape[-1])
+                # dat.shape = (2, -1, 5120, 2)
+                # dat = np.transpose(dat, (0,1,3,2))
+                # shape = dat.shape
+                # print(shape)
+                # dat = dat.reshape(-1, shape[-1])
+                # np.savetxt(fn+".new", dat)
+                # dat.shape = shape
+                return dat
+            except:
+                print("nocache:", fn)
+            
+            dy = ycoords[1] - ycoords[0]
+            print(tracer, dy)
+            dat = [], []
+            with Pool(16) as pool:
+                tracerfunc = partial(tracer.follow_field_lines, chunk=int(1e8), timeout=60)
+                for outer, y in zip(outer_lines, ycoords):
+                    for lst, dist in zip(dat, [dy, -dy]):
+                        lst += [pool.apply_async(tracerfunc, (outer.R, outer.Z, [y, y+dist]))]
+                k = 0
+                with zb.progress.Progress() as prog:
+                    prog.update(0)
+                    for da in dat:
+                        for i in range(len(da)):
+                            da[i] = da[i].get()
+                            k+=1
+                            prog.update(k/len(da)/2)
+            for da in dat:
+                for i in range(len(da)):
+                    da[i] = np.transpose(da[i][1])
+                    print(np.array(da[i]).shape)
+            dat = np.array(dat)
+            shape = dat.shape
+            print(shape)
+            dat.shape = (-1, shape[-1])
+            np.savetxt(fn, dat)
+            dat.shape = shape
+            return dat
+
+        for i in range(1):
+            dochanges = False
+            fwd, bwd = trace(outer_lines, i)
+            ny = len(ycoords)
+            for j in range(ny):
+                # Find points that are outside
+                rz = np.ascontiguousarray(np.array([outer_lines[j].R, outer_lines[j].Z]).T)
+                tf = np.ascontiguousarray(np.transpose(fwd[j-1]))
+                tb = np.ascontiguousarray(np.transpose(bwd[j+1-ny]))
+                
+                outi = []
+                for l, k in enumerate(rz):
+                    if eudist.winding_number(tf, k) == 0 and eudist.winding_number(tb, k) == 0:
+                        outi.append(l)
+                        
+                # Get contigous blocks that are outside
+                blocks = []
+                last = None
+                for k in outi:
+                    if k -1 != last:
+                        blocks.append([])
+                    blocks[-1].append(k)
+                    last = k
+                if len(blocks) > 1:
+                    if blocks[0][0] == 0 and blocks[-1][-1] == len(rz) -1:
+                        blocks[0] = blocks[-1] + blocks[0]
+                        del blocks[-1]
+                
+                if len(blocks):
+                    dochanges =True
+                else:
+                    continue
+                # Now find the data that we want to replace it with:
+                newdats = []
+                for block in blocks:
+                    tmp = []
+                    for t in tf, tb:
+                        dist = np.sum((t-rz[block[0]])**2, axis=1)
+                        assert dist.shape == (len(rz),)
+                        di = np.argmin(dist)
+                        tmp.append((dist[di],di))
+                    
+                    close, far = (tf, tb )if tmp[0][0] < tmp[1][0] else (tb, tf)
+                    closeindex = tmp[0][1] if tmp[0][0] < tmp[1][0] else tmp[1][1]
+                    for k in range(5):
+                        if closeindex+k >= len(close):
+                            k-= len(close)
+                        if eudist.winding_number(rz, close[closeindex+k]) != 0:
+                            if eudist.winding_number(far, close[closeindex+k]) == 0:
+                                step = +1
+                                closeindex+=k
+                                break
+                        # if k:
+                        #     if eudist.winding_number(rz, close[closeindex-k]) == 0:
+                        #         if eudist.winding_number(far, close[closeindex-k]) == 0:
+                        #             closeindex -= k
+                        #             step = -1
+                        #             break
+                    else:
+                        if len(block) < 3:
+                            newdats.append([])
+                            continue
+                        plt.plot(*rz.T, label='rz')
+                        plt.plot(*(close[closeindex-5:closeindex+5].T), "rx-", label='close')
+                        plt.plot(*far.T, label='far')
+                        plt.legend()
+                        plt.show()
+                        raise RuntimeError("what?")
+                    newdats.append([])
+                    while True:
+                        # If the close is now inside:
+                        if eudist.winding_number(far, close[closeindex]) != 0:
+                            dist = np.sum((far-close[closeindex])**2, axis=1)
+                            close, far = far, close
+                            closeindex = np.argmin(dist)
+                        # If we are now inside the original shape again we can stop
+                        if eudist.winding_number(rz, close[closeindex]) == 0:
+                            break
+                        newdats[-1].append(close[closeindex])
+                        closeindex += step
+                        closeindex %= len(close)
+                # Plotting to debug
+                # plt.plot(*rz.T, label="org")
+                # plt.plot(*tf.T, label="fwd")
+                # plt.plot(*tb.T, label="bwd")
+                # for block, new in zip(blocks, newdats):
+                #     plt.plot(*(rz[block].T), "rx-", label="old")
+                #     plt.plot(*(np.array(new).T), "o-", label="new")
+                # plt.legend()
+                # plt.show()
+                orgrz = rz
+                rz = list(rz)
+                keepi = []
+                for block in blocks:
+                    keepi.append(block[0])
+                    keepi.append(block[-1])
+                keepi.append(keepi[0])
+                del keepi[0]
+                keeps = []
+                for a, b in zip(keepi[::2], keepi[1::2]):
+                    if b > a:
+                        keeps.append(rz[a+1:b])
+                    else:
+                        keeps.append(rz[a+1:] + rz[:b])
+                rz = []
+                for new, keep in zip(newdats, keeps):
+                    rz += new
+                    rz += keep
+                    # if block[-1] > block[0]:
+                    #     rz = rz[:block[0]] + new + rz[block[-1]+1:]
+                    # else:
+                    #     rz = 
+                    #     print(block[-1], block[0])
+                    #     print(*[(block[0], block[-1]) for block in blocks])
+                    #     raise
+                rz = np.array(rz)
+                #plt.plot(*rz.T)
+                #plt.title(j)
+                outer_lines[j] = zb.rzline.line_from_points(*rz.T, spline_order=1, is_sorted=True)
+                outer_lines[j] = outer_lines[j].equallySpaced(n=10*nz)
+                #plt.show()
+            if not dochanges:
+                break
     if show_lines:
         for i in range(ny):
             plt.figure()
@@ -338,7 +523,7 @@ def W7X(
                 label="inner",
             )
             plt.plot(
-                *inner_lines[i].position(np.linspace(0, 2 * np.pi, 10 * nz)),
+                *outer_lines[i].position(np.linspace(0, 2 * np.pi, 10 * nz)),
                 label="outer",
             )
             plt.legend()
@@ -359,12 +544,6 @@ def W7X(
         grid = zb.grid.Grid(poloidal_grid, ycoords, yperiod, yperiodic=True)
 
     with timeit("Creating maps took %f"):
-        tracer = (
-            zb.fieldtracer.FieldTracerWeb(configId=configuration, stepsize=0.01)
-            if trace_web
-            else None
-        )
-        print(tracer)
         maps = zb.make_maps(grid, field, field_tracer=tracer)
     zb.write_maps(grid, field, maps, str(fname), metric2d=False)
 
@@ -420,8 +599,6 @@ def get_VMEC_surfaces(phi=[0], s=0.75, w7x_run="w7x_ref_1", npoints=100):
 
 ### Return the W7X PFC as RZline objects
 def get_W7X_vessel(phi=[0], nz=256, show=False):
-    import hashlib
-
     m = hashlib.md5()
     m.update("-".join([str(x) for x in phi]).encode())
     fn = f"w7x_vessel_{nz}_{m.hexdigest()[:10]}.cache"
@@ -483,11 +660,19 @@ def get_W7X_vessel(phi=[0], nz=256, show=False):
         line = zb.rzline.line_from_points(r, z, spline_order=1, is_sorted=False)
         if show:
             plt.plot(*all_vertices.T, "xr")
-        
-            for o in 0,1,2,3,5:
-                plt.plot(*zb.rzline.line_from_points(r, z, spline_order=o).position(np.linspace(0, 2 * np.pi, 10*nz)), label=o)
-            plt.plot(*line.position(np.linspace(0, 2 * np.pi, 10*nz)), label="before")
-            plt.plot(*line.equallySpaced(n=nz).position(np.linspace(0, 2 * np.pi, 10*nz)), label="equally spaced")
+
+            for o in 0, 1, 2, 3, 5:
+                plt.plot(
+                    *zb.rzline.line_from_points(r, z, spline_order=o).position(
+                        np.linspace(0, 2 * np.pi, 10 * nz)
+                    ),
+                    label=o,
+                )
+            plt.plot(*line.position(np.linspace(0, 2 * np.pi, 10 * nz)), label="before")
+            plt.plot(
+                *line.equallySpaced(n=nz).position(np.linspace(0, 2 * np.pi, 10 * nz)),
+                label="equally spaced",
+            )
             plt.legend()
             plt.show()
         line = line.equallySpaced(n=nz)
@@ -529,9 +714,9 @@ def calc_curvilinear_curvature(fname, field, grid, maps):
         R = pol.R
         Z = pol.Z
         # G = \vec{B}/B, here in cylindrical coordinates
-        GR[:, y, :] = field.Bxfunc(R, y, Z) / ((B[:, y, :]) ** 2)
-        GZ[:, y, :] = field.Bzfunc(R, y, Z) / ((B[:, y, :]) ** 2)
-        Gphi[:, y, :] = field.Byfunc(R, y, Z) / ((B[:, y, :]) ** 2)
+        GR[:, y, :] = field.Bxfunc(R, Z, y) / ((B[:, y, :]) ** 2)
+        GZ[:, y, :] = field.Bzfunc(R, Z, y) / ((B[:, y, :]) ** 2)
+        Gphi[:, y, :] = field.Byfunc(R, Z, y) / ((B[:, y, :]) ** 2)
         for x in np.arange(0, B.shape[0]):
             dRdz[x, y, :] = calc.deriv(R[x, :]) / dz[x, y, :]
             dZdz[x, y, :] = calc.deriv(Z[x, :]) / dz[x, y, :]

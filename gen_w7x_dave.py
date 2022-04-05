@@ -26,7 +26,7 @@ def gen(conf, shape, **kw):
             outer_vessel=True,
             inner_VMEC=True,
             configuration=conf,
-            calc_curvature=False,
+            calc_curvature=True,
             fname=fn,
             **kw,
         )
@@ -90,7 +90,28 @@ if "17" in sys.argv:
         gen(4, (256 + 4, 72, 1024), show_maps=False, field_refine=0)
 if "18" in sys.argv:
     with timeit():
-        gen(0, (64 + 4, 36, 128), show_maps=False, field_refine=1, trace_web=False)
+        gen(0, (64 + 4, 36, 128), show_maps=False, field_refine=0) #1, trace_web=False)
 if "19" in sys.argv:
     with timeit():
         gen(0, (64 + 4, 72, 128), show_maps=False, field_refine=0)
+if "20" in sys.argv:
+    with timeit():
+        gen(4, (32 + 4, 16, 128), show_maps=False, field_refine=0)
+if "21" in sys.argv:
+    with timeit():
+        gen(4, (64 + 4, 16, 256), show_maps=False, field_refine=0)
+if "22" in sys.argv:
+    with timeit():
+        gen(4, (128 + 4, 16, 512), show_maps=False, field_refine=0)
+if "23" in sys.argv:
+    with timeit():
+        gen(4, (256 + 4, 16, 1024), show_maps=False, field_refine=0)
+if "24" in sys.argv:
+    with timeit():
+        gen(4, (128 + 4, 32, 512), show_maps=False, field_refine=0)
+if "25" in sys.argv:
+    with timeit():
+        gen(4, (128 + 4, 72, 512), show_maps=False, field_refine=4)
+if "26" in sys.argv:
+    with timeit():
+        gen(4, (16 + 4, 4, 32), show_maps=False, field_refine=0)

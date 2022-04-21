@@ -1,14 +1,14 @@
-import zoidberg as zb
-import numpy as np
-from boututils.datafile import DataFile
-from multiprocessing import Pool
-from functools import partial
-import boututils.calculus as calc
-import matplotlib.pyplot as plt
+import hashlib
 import random
 import time
-import hashlib
+from functools import partial
+from multiprocessing import Pool
 
+import boututils.calculus as calc
+import matplotlib.pyplot as plt
+import numpy as np
+import zoidberg as zb
+from boututils.datafile import DataFile
 
 
 def screwpinch(
@@ -368,7 +368,7 @@ def W7X(
             print(tracer, dy)
             dat = [], []
             with Pool(16) as pool:
-                tracerfunc = partial(tracer.follow_field_lines, chunk=int(1e8), timeout=60)
+                tracerfunc = partial(tracer.follow_field_lines, chunk=int(1e8), timeout=60, retry=2)
                 for outer, y in zip(outer_lines, ycoords):
                     for lst, dist in zip(dat, [dy, -dy]):
                         lst += [pool.apply_async(tracerfunc, (outer.R, outer.Z, [y, y+dist]))]
@@ -434,6 +434,7 @@ def W7X(
                         di = np.argmin(dist)
                         tmp.append((dist[di],di))
                     
+                    newdats.append([])
                     close, far = (tf, tb )if tmp[0][0] < tmp[1][0] else (tb, tf)
                     closeindex = tmp[0][1] if tmp[0][0] < tmp[1][0] else tmp[1][1]
                     for k in range(5):
@@ -451,16 +452,31 @@ def W7X(
                         #             step = -1
                         #             break
                     else:
-                        if len(block) < 3:
-                            newdats.append([])
-                            continue
-                        plt.plot(*rz.T, label='rz')
-                        plt.plot(*(close[closeindex-5:closeindex+5].T), "rx-", label='close')
-                        plt.plot(*far.T, label='far')
-                        plt.legend()
-                        plt.show()
-                        raise RuntimeError("what?")
-                    newdats.append([])
+                        close, far = (tf, tb )if tmp[0][0] >= tmp[1][0] else (tb, tf)
+                        closeindex = tmp[0][1] if tmp[0][0] >= tmp[1][0] else tmp[1][1]
+                        for k in range(5):
+                            if closeindex+k >= len(close):
+                                k-= len(close)
+                            if eudist.winding_number(rz, close[closeindex+k]) != 0:
+                                if eudist.winding_number(far, close[closeindex+k]) == 0:
+                                    step = +1
+                                    closeindex+=k
+                                    break
+                        else:
+                            if len(block) < 10:
+                                # Just ignore it ...
+                                continue
+                            print(len(block), block)
+                            print(tmp)
+                            close, far = (tf, tb )if tmp[0][0] < tmp[1][0] else (tb, tf)
+                            closeindex = tmp[0][1] if tmp[0][0] < tmp[1][0] else tmp[1][1]
+                            plt.plot(*rz.T, "x-",label='rz')
+                            plt.plot(*rz[block].T, "o", label='outside')
+                            plt.plot(*(close[closeindex-5:closeindex+5].T), "rx-", label='close')
+                            plt.plot(*far.T, "x-",label='far')
+                            plt.legend()
+                            plt.show()
+                            raise RuntimeError("what?")
                     while True:
                         # If the close is now inside:
                         if eudist.winding_number(far, close[closeindex]) != 0:
@@ -612,8 +628,8 @@ def get_W7X_vessel(phi=[0], nz=256, show=False):
         return lines
     except:
         pass
-    from osa import Client
     import matplotlib.path as path
+    from osa import Client
 
     srv2 = Client("http://esb.ipp-hgw.mpg.de:8280/services/MeshSrv?wsdl")
     # describe geometry

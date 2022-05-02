@@ -55,6 +55,7 @@ def rotating_ellipse(
     a=0.4,
     curvilinear_inner_aligned=True,
     curvilinear_outer_aligned=True,
+    curvilinear_outer_limited=False,
     npoints=421,
     Btor=2.5,
     show_maps=False,
@@ -96,6 +97,12 @@ def rotating_ellipse(
             outer_lines = get_lines(
                 field, xcentre + a, start_z, ycoords, yperiod=yperiod, npoints=npoints
             )
+        if curvilinear_outer_limited:
+            for outer in outer_lines:
+                print(
+                    np.min(outer.Z), np.max(outer.Z), np.min(outer.R), np.max(outer.R)
+                )
+            raise
 
         print("creating grid...")
         if curvilinear_inner_aligned:

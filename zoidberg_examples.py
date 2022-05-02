@@ -334,7 +334,7 @@ def W7X(
             inner_lines = get_VMEC_surfaces(
                 phi=ycoords, s=0.67, npoints=nz * 2, w7x_run=vmec_url
             )
-            
+
     tracer = (
         zb.fieldtracer.FieldTracerWeb(configId=configuration, stepsize=0.01)
         if trace_web
@@ -343,8 +343,7 @@ def W7X(
     if 1 or avoid_double_outer:
         print("Avoid double bndr")
         import eudist
-        
-        outer_lines
+
         def trace(outer_lines, i):
             m = hashlib.md5()
             m.update("-".join([str(x) for x in ycoords]).encode())
@@ -353,40 +352,39 @@ def W7X(
             try:
                 dat = np.loadtxt(fn)
                 dat.shape = (2, -1, 2, dat.shape[-1])
-                # dat.shape = (2, -1, 5120, 2)
-                # dat = np.transpose(dat, (0,1,3,2))
-                # shape = dat.shape
-                # print(shape)
-                # dat = dat.reshape(-1, shape[-1])
-                # np.savetxt(fn+".new", dat)
-                # dat.shape = shape
                 return dat
             except:
                 print("nocache:", fn)
-            
+
             dy = ycoords[1] - ycoords[0]
             print(tracer, dy)
             dat = [], []
             with Pool(16) as pool:
-                tracerfunc = partial(tracer.follow_field_lines, chunk=int(1e8), timeout=60, retry=2)
+                tracerfunc = partial(
+                    tracer.follow_field_lines, chunk=int(1e8), timeout=60, retry=2
+                )
                 for outer, y in zip(outer_lines, ycoords):
                     for lst, dist in zip(dat, [dy, -dy]):
-                        lst += [pool.apply_async(tracerfunc, (outer.R, outer.Z, [y, y+dist]))]
+                        lst += [
+                            pool.apply_async(
+                                tracerfunc, (outer.R, outer.Z, [y, y + dist])
+                            )
+                        ]
                 k = 0
                 with zb.progress.Progress() as prog:
                     prog.update(0)
                     for da in dat:
                         for i in range(len(da)):
                             da[i] = da[i].get()
-                            k+=1
-                            prog.update(k/len(da)/2)
+                            k += 1
+                            prog.update(k / len(da) / 2)
             for da in dat:
                 for i in range(len(da)):
                     da[i] = np.transpose(da[i][1])
-                    print(np.array(da[i]).shape)
+                    #print(np.array(da[i]).shape)
             dat = np.array(dat)
             shape = dat.shape
-            print(shape)
+            #print(shape)
             dat.shape = (-1, shape[-1])
             np.savetxt(fn, dat)
             dat.shape = shape
@@ -398,30 +396,35 @@ def W7X(
             ny = len(ycoords)
             for j in range(ny):
                 # Find points that are outside
-                rz = np.ascontiguousarray(np.array([outer_lines[j].R, outer_lines[j].Z]).T)
-                tf = np.ascontiguousarray(np.transpose(fwd[j-1]))
-                tb = np.ascontiguousarray(np.transpose(bwd[j+1-ny]))
-                
+                rz = np.ascontiguousarray(
+                    np.array([outer_lines[j].R, outer_lines[j].Z]).T
+                )
+                tf = np.ascontiguousarray(np.transpose(fwd[j - 1]))
+                tb = np.ascontiguousarray(np.transpose(bwd[j + 1 - ny]))
+
                 outi = []
                 for l, k in enumerate(rz):
-                    if eudist.winding_number(tf, k) == 0 and eudist.winding_number(tb, k) == 0:
+                    if (
+                        eudist.winding_number(tf, k) == 0
+                        and eudist.winding_number(tb, k) == 0
+                    ):
                         outi.append(l)
-                        
+
                 # Get contigous blocks that are outside
                 blocks = []
                 last = None
                 for k in outi:
-                    if k -1 != last:
+                    if k - 1 != last:
                         blocks.append([])
                     blocks[-1].append(k)
                     last = k
                 if len(blocks) > 1:
-                    if blocks[0][0] == 0 and blocks[-1][-1] == len(rz) -1:
+                    if blocks[0][0] == 0 and blocks[-1][-1] == len(rz) - 1:
                         blocks[0] = blocks[-1] + blocks[0]
                         del blocks[-1]
-                
+
                 if len(blocks):
-                    dochanges =True
+                    dochanges = True
                 else:
                     continue
                 # Now find the data that we want to replace it with:
@@ -429,21 +432,21 @@ def W7X(
                 for block in blocks:
                     tmp = []
                     for t in tf, tb:
-                        dist = np.sum((t-rz[block[0]])**2, axis=1)
+                        dist = np.sum((t - rz[block[0]]) ** 2, axis=1)
                         assert dist.shape == (len(rz),)
                         di = np.argmin(dist)
-                        tmp.append((dist[di],di))
-                    
+                        tmp.append((dist[di], di))
+
                     newdats.append([])
-                    close, far = (tf, tb )if tmp[0][0] < tmp[1][0] else (tb, tf)
+                    close, far = (tf, tb) if tmp[0][0] < tmp[1][0] else (tb, tf)
                     closeindex = tmp[0][1] if tmp[0][0] < tmp[1][0] else tmp[1][1]
                     for k in range(5):
-                        if closeindex+k >= len(close):
-                            k-= len(close)
-                        if eudist.winding_number(rz, close[closeindex+k]) != 0:
-                            if eudist.winding_number(far, close[closeindex+k]) == 0:
+                        if closeindex + k >= len(close):
+                            k -= len(close)
+                        if eudist.winding_number(rz, close[closeindex + k]) != 0:
+                            if eudist.winding_number(far, close[closeindex + k]) == 0:
                                 step = +1
-                                closeindex+=k
+                                closeindex += k
                                 break
                         # if k:
                         #     if eudist.winding_number(rz, close[closeindex-k]) == 0:
@@ -452,15 +455,18 @@ def W7X(
                         #             step = -1
                         #             break
                     else:
-                        close, far = (tf, tb )if tmp[0][0] >= tmp[1][0] else (tb, tf)
+                        close, far = (tf, tb) if tmp[0][0] >= tmp[1][0] else (tb, tf)
                         closeindex = tmp[0][1] if tmp[0][0] >= tmp[1][0] else tmp[1][1]
                         for k in range(5):
-                            if closeindex+k >= len(close):
-                                k-= len(close)
-                            if eudist.winding_number(rz, close[closeindex+k]) != 0:
-                                if eudist.winding_number(far, close[closeindex+k]) == 0:
+                            if closeindex + k >= len(close):
+                                k -= len(close)
+                            if eudist.winding_number(rz, close[closeindex + k]) != 0:
+                                if (
+                                    eudist.winding_number(far, close[closeindex + k])
+                                    == 0
+                                ):
                                     step = +1
-                                    closeindex+=k
+                                    closeindex += k
                                     break
                         else:
                             if len(block) < 10:
@@ -468,19 +474,25 @@ def W7X(
                                 continue
                             print(len(block), block)
                             print(tmp)
-                            close, far = (tf, tb )if tmp[0][0] < tmp[1][0] else (tb, tf)
-                            closeindex = tmp[0][1] if tmp[0][0] < tmp[1][0] else tmp[1][1]
-                            plt.plot(*rz.T, "x-",label='rz')
-                            plt.plot(*rz[block].T, "o", label='outside')
-                            plt.plot(*(close[closeindex-5:closeindex+5].T), "rx-", label='close')
-                            plt.plot(*far.T, "x-",label='far')
+                            close, far = (tf, tb) if tmp[0][0] < tmp[1][0] else (tb, tf)
+                            closeindex = (
+                                tmp[0][1] if tmp[0][0] < tmp[1][0] else tmp[1][1]
+                            )
+                            plt.plot(*rz.T, "x-", label="rz")
+                            plt.plot(*rz[block].T, "o", label="outside")
+                            plt.plot(
+                                *(close[closeindex - 5 : closeindex + 5].T),
+                                "rx-",
+                                label="close",
+                            )
+                            plt.plot(*far.T, "x-", label="far")
                             plt.legend()
                             plt.show()
                             raise RuntimeError("what?")
                     while True:
                         # If the close is now inside:
                         if eudist.winding_number(far, close[closeindex]) != 0:
-                            dist = np.sum((far-close[closeindex])**2, axis=1)
+                            dist = np.sum((far - close[closeindex]) ** 2, axis=1)
                             close, far = far, close
                             closeindex = np.argmin(dist)
                         # If we are now inside the original shape again we can stop
@@ -509,9 +521,9 @@ def W7X(
                 keeps = []
                 for a, b in zip(keepi[::2], keepi[1::2]):
                     if b > a:
-                        keeps.append(rz[a+1:b])
+                        keeps.append(rz[a + 1 : b])
                     else:
-                        keeps.append(rz[a+1:] + rz[:b])
+                        keeps.append(rz[a + 1 :] + rz[:b])
                 rz = []
                 for new, keep in zip(newdats, keeps):
                     rz += new
@@ -519,16 +531,18 @@ def W7X(
                     # if block[-1] > block[0]:
                     #     rz = rz[:block[0]] + new + rz[block[-1]+1:]
                     # else:
-                    #     rz = 
+                    #     rz =
                     #     print(block[-1], block[0])
                     #     print(*[(block[0], block[-1]) for block in blocks])
                     #     raise
                 rz = np.array(rz)
-                #plt.plot(*rz.T)
-                #plt.title(j)
-                outer_lines[j] = zb.rzline.line_from_points(*rz.T, spline_order=1, is_sorted=True)
-                outer_lines[j] = outer_lines[j].equallySpaced(n=10*nz)
-                #plt.show()
+                # plt.plot(*rz.T)
+                # plt.title(j)
+                outer_lines[j] = zb.rzline.line_from_points(
+                    *rz.T, spline_order=1, is_sorted=True
+                )
+                outer_lines[j] = outer_lines[j].equallySpaced(n=10 * nz)
+                # plt.show()
             if not dochanges:
                 break
     if show_lines:
@@ -561,6 +575,7 @@ def W7X(
 
     with timeit("Creating maps took %f"):
         maps = zb.make_maps(grid, field, field_tracer=tracer)
+    maps["phi"] = ycoords
     zb.write_maps(grid, field, maps, str(fname), metric2d=False)
 
     if calc_curvature:
@@ -574,6 +589,140 @@ def W7X(
 
     if show_maps:
         zb.plot.plot_forward_map(grid, maps, yslice=-1)
+
+
+def get_tracer(_cache={}):
+    from osa import Client
+
+    if "tracer" not in _cache:
+        _cache["tracer"] = Client("http://esb:8280/services/FieldLineProxy?wsdl")
+    return _cache["tracer"]
+
+
+def connection_length(RZ, phi, conf, limit):
+    m = hashlib.md5()
+    for var in [*RZ, phi]:
+        m.update("-".join([str(x) for x in var]).encode())
+    m.update("-".join([str(x) for x in phi]).encode())
+    fn = f"w7x_poincare_{conf}_{m.hexdigest()[:10]}.cache"
+    try:
+        dat = np.loadtxt(fn)
+        dat.shape = (2, -1, 2, dat.shape[-1])
+        return dat
+    except:
+        print("nocache:", fn)
+    flt = get_tracer()
+    pnts = flt.types.Points3D()
+
+
+def trace_boundary(fn, conf):
+    with DataFile(fn) as dat:
+        nx = dat["nx"]
+        mxg = dat.get("MXG", 2)
+        myg = dat.get("MYG", 1)
+        phi = dat["phi"]
+        limit = np.max(dat["R"]) * np.max(dat["dy"]) * (myg + 0.5)
+
+        for fwd, dir in zip(("forward", "backward"), (1, -1)):
+            xtp = dat[fwd + "_xt_prime"]
+            bnd = xtp > nx - mxg - 1
+            RZ = dat["R"][bnd], dat["Z"][bnd]
+
+            print(RZ[0].shape, xtp.size)
+        return
+
+
+def trace_poincare(start_r, start_z, yslices, npoints, conf, symmetry=5, step=1e-3):
+    import xarray as xr
+
+    m = hashlib.md5()
+    start_r = np.array(start_r)
+    start_z = np.array(start_z)
+    for var in start_r, start_z, yslices, [symmetry, npoints, step]:
+        m.update("-".join([str(x) for x in var]).encode())
+
+    fn = f"w7x_poincare_{conf}_{m.hexdigest()[:10]}.cache.nc"
+    try:
+        dat = xr.open_dataarray(fn)
+        return dat
+    except:
+        print("nocache:", fn)
+
+    yslices0 = np.array(yslices).copy()
+    if symmetry > 1:
+        ylen = len(yslices)
+        yslices = np.empty(ylen * symmetry)
+        offsets = np.linspace(0, 2 * np.pi, symmetry, endpoint=False)
+        for i, y0 in enumerate(yslices0):
+            yslices[i * symmetry : (i + 1) * symmetry] = y0 + offsets
+
+    flt = get_tracer()
+    pnts = flt.types.Points3D()
+    pnts.x1 = start_r * np.cos(yslices[0])
+    pnts.x2 = start_r * np.sin(yslices[0])
+    pnts.x3 = start_z
+    print(pnts)
+
+    config = flt.types.MagneticConfig()
+    config.configIds = [conf]
+
+    poincare = flt.types.PoincareInPhiPlane()
+    poincare.numPoints = npoints
+    poincare.phi0 = yslices
+
+    task = flt.types.Task()
+    task.step = step
+    task.poincare = poincare
+
+    res = flt.service.trace(pnts, config, task, None, None)
+
+    print(len(res.surfs))
+
+    """ plot the points: """
+    # for i in range(0, len(res.surfs)):
+    #    plt.scatter(res.surfs[i].points.x1, res.surfs[i].points.x3, color="red", s=0.1)
+    dat = np.empty((2, len(yslices0), symmetry, len(pnts.x1), npoints)) * np.nan
+    i = 0
+    for i0 in range(len(pnts.x1)):
+        for i1 in range(len(yslices0)):
+            for i2 in range(symmetry):
+                s = res.surfs[i]
+                xyz = np.array([s.points.x1, s.points.x2, s.points.x3])
+                r = np.sqrt(np.sum(xyz[:2] ** 2, axis=0))
+                ln = len(r)
+                if ln != npoints:
+                    print(i0, i1, i2)
+                print(yslices0[i1], s.phi0 % (2 * np.pi / symmetry))
+                assert np.isclose(yslices0[i1], s.phi0 % (2 * np.pi / symmetry))
+                # print(s.phi0, l0, l0+ln)
+                dat[0, i1, i2, i0, :ln] = r
+                dat[1, i1, i2, i0, :ln] = xyz[2]
+                i += 1
+    da = xr.DataArray(
+        dat,
+        dims=("Rz", "phi", "symmetry", "index", "point"),
+        coords=dict(Rz=["R", "z"], phi=np.array(yslices0)),
+    )
+    da.attrs = dict(step=step, configuration=conf)
+    # print(da)
+    da.to_netcdf(fn)
+    return da
+
+
+def plot_poincare(*args):
+    da = trace_poincare(*args)
+    for phi in da.phi:
+        dap = da.sel(phi=phi)
+        plt.figure()
+        print(dap)
+        for index in dap.index:
+            plt.scatter(*dap.sel(index=index))
+        plt.title(f"phi = {phi.data}")
+        # .plot(x="R", y="z",fmt="o")
+    #    for s in res.surfs:
+    #        print(s)
+    #        plt.scatter(s.points.x1, s.points.x3, color="red", s=0.1)
+    plt.show()
 
 
 def get_lines(

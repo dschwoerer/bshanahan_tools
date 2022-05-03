@@ -1,5 +1,3 @@
-import proxy_local_12345
-
 import hashlib
 import random
 import time

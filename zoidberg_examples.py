@@ -1,3 +1,5 @@
+import proxy_local_12345
+
 import hashlib
 import random
 import time
@@ -256,6 +258,7 @@ def W7X(
     outer_VMEC=False,
     outer_vacuum=False,
     outer_vessel=False,
+    outer_poincare=False,
     npoints=100,
     a=2.5,
     show_maps=False,
@@ -283,13 +286,31 @@ def W7X(
 
     yperiod = 2 * np.pi / 5.0
     ycoords = np.linspace(0.0, yperiod, ny, endpoint=False)
+    outer_lines = None
     if outer_VMEC:
         print("Aligning to outer VMEC flux surface...")
-        outer_lines = get_VMEC_surfaces(phi=ycoords, s=1, npoints=nz, w7x_run=vmec_url)
-    elif outer_vessel:
+        outer_lines = get_inner(
+            get_VMEC_surfaces(phi=ycoords, s=1, npoints=nz, w7x_run=vmec_url),
+            outer_lines,
+        )
+
+    if outer_vessel:
         print("Aligning to plasma vessel (EXPERIMENTAL) ...")
         with timeit(" ... took %f"):
-            outer_lines = get_W7X_vessel(phi=ycoords, nz=nz * 10)
+            outer_lines = get_inner(
+                get_W7X_vessel(phi=ycoords, nz=nz * 10), outer_lines
+            )
+            assert_valid(outer_lines)
+
+    if outer_poincare:
+        R0 = {0: 6.3, 4: 6.17}[configuration]
+        print(f"Aligning to poincare R={R0}")
+        with timeit(" ... took %f"):
+            outer_lines = get_inner(
+                get_W7X_poincare(R0, phi=ycoords, conf=configuration, nz=nz * 10),
+                outer_lines,
+            )
+
     elif outer_vacuum or inner_vacuum:
         xmin = 4.05
         xmax = 4.05 + 2.5
@@ -349,13 +370,12 @@ def W7X(
     )
     if 1 or avoid_double_outer:
         print("Avoid double bndr")
-        import eudist
 
-        def trace(outer_lines, i):
+        def trace(outer_lines):
             m = hashlib.md5()
             m.update("-".join([str(x) for x in ycoords]).encode())
             fn0 = fn = f"w7x_vessel_{nz}_{m.hexdigest()[:10]}"
-            fn = f"{fn0}.iter{i}.cache"
+            fn = f"{fn0}.cache"
             try:
                 dat = np.loadtxt(fn)
                 dat.shape = (2, -1, 2, dat.shape[-1])
@@ -388,170 +408,47 @@ def W7X(
             for da in dat:
                 for i in range(len(da)):
                     da[i] = np.transpose(da[i][1])
-                    #print(np.array(da[i]).shape)
-            dat = np.array(dat)
+                    print(np.array(da[i]).shape)
+            try:
+                dat = np.array(dat)
+            except:
+                # print(dat)
+                raise
             shape = dat.shape
-            #print(shape)
+            # print(shape)
             dat.shape = (-1, shape[-1])
             np.savetxt(fn, dat)
             dat.shape = shape
             return dat
 
-        for i in range(1):
-            dochanges = False
-            fwd, bwd = trace(outer_lines, i)
-            ny = len(ycoords)
-            for j in range(ny):
-                # Find points that are outside
-                rz = np.ascontiguousarray(
-                    np.array([outer_lines[j].R, outer_lines[j].Z]).T
-                )
-                tf = np.ascontiguousarray(np.transpose(fwd[j - 1]))
-                tb = np.ascontiguousarray(np.transpose(bwd[j + 1 - ny]))
+        fwd, bwd = trace(outer_lines)
+        # ny = len(ycoords)
+        # plt.plot(*bwd[0])
+        # plt.plot(*bwd[1])
+        # plt.plot(*bwd[-1])
+        # plt.show()
+        fwd = np.roll(fwd, 1, axis=0)
+        bwd = np.roll(bwd, -1, axis=0)
+        # print(fwd.shape)
+        # Find points that are outside
+        # plt.plot(union.R, union.Z)
+        # for i in range(16):
+        #     plt.figure()
+        #     plt.plot(*fwd[i], label="fwd")
+        #     plt.plot(*bwd[i], label="bwd")
+        #     plt.plot(outer_lines[i].R, outer_lines[i].Z, label="this")
+        #     plt.legend()
+        #     plt.title(i)
+        # plt.show()
+        union = get_outer(fwd, bwd)
+        outer_lines = get_inner(outer_lines, union)
+        # for j in range(ny):
+        #     outer_lines[j] = zb.rzline.line_from_points(
+        #         *good[j].T, spline_order=1, is_sorted=True
+        #     )
+        #     outer_lines[j] = outer_lines[j].equallySpaced(n=10 * nz)
+        #     # plt.show()
 
-                outi = []
-                for l, k in enumerate(rz):
-                    if (
-                        eudist.winding_number(tf, k) == 0
-                        and eudist.winding_number(tb, k) == 0
-                    ):
-                        outi.append(l)
-
-                # Get contigous blocks that are outside
-                blocks = []
-                last = None
-                for k in outi:
-                    if k - 1 != last:
-                        blocks.append([])
-                    blocks[-1].append(k)
-                    last = k
-                if len(blocks) > 1:
-                    if blocks[0][0] == 0 and blocks[-1][-1] == len(rz) - 1:
-                        blocks[0] = blocks[-1] + blocks[0]
-                        del blocks[-1]
-
-                if len(blocks):
-                    dochanges = True
-                else:
-                    continue
-                # Now find the data that we want to replace it with:
-                newdats = []
-                for block in blocks:
-                    tmp = []
-                    for t in tf, tb:
-                        dist = np.sum((t - rz[block[0]]) ** 2, axis=1)
-                        assert dist.shape == (len(rz),)
-                        di = np.argmin(dist)
-                        tmp.append((dist[di], di))
-
-                    newdats.append([])
-                    close, far = (tf, tb) if tmp[0][0] < tmp[1][0] else (tb, tf)
-                    closeindex = tmp[0][1] if tmp[0][0] < tmp[1][0] else tmp[1][1]
-                    for k in range(5):
-                        if closeindex + k >= len(close):
-                            k -= len(close)
-                        if eudist.winding_number(rz, close[closeindex + k]) != 0:
-                            if eudist.winding_number(far, close[closeindex + k]) == 0:
-                                step = +1
-                                closeindex += k
-                                break
-                        # if k:
-                        #     if eudist.winding_number(rz, close[closeindex-k]) == 0:
-                        #         if eudist.winding_number(far, close[closeindex-k]) == 0:
-                        #             closeindex -= k
-                        #             step = -1
-                        #             break
-                    else:
-                        close, far = (tf, tb) if tmp[0][0] >= tmp[1][0] else (tb, tf)
-                        closeindex = tmp[0][1] if tmp[0][0] >= tmp[1][0] else tmp[1][1]
-                        for k in range(5):
-                            if closeindex + k >= len(close):
-                                k -= len(close)
-                            if eudist.winding_number(rz, close[closeindex + k]) != 0:
-                                if (
-                                    eudist.winding_number(far, close[closeindex + k])
-                                    == 0
-                                ):
-                                    step = +1
-                                    closeindex += k
-                                    break
-                        else:
-                            if len(block) < 10:
-                                # Just ignore it ...
-                                continue
-                            print(len(block), block)
-                            print(tmp)
-                            close, far = (tf, tb) if tmp[0][0] < tmp[1][0] else (tb, tf)
-                            closeindex = (
-                                tmp[0][1] if tmp[0][0] < tmp[1][0] else tmp[1][1]
-                            )
-                            plt.plot(*rz.T, "x-", label="rz")
-                            plt.plot(*rz[block].T, "o", label="outside")
-                            plt.plot(
-                                *(close[closeindex - 5 : closeindex + 5].T),
-                                "rx-",
-                                label="close",
-                            )
-                            plt.plot(*far.T, "x-", label="far")
-                            plt.legend()
-                            plt.show()
-                            raise RuntimeError("what?")
-                    while True:
-                        # If the close is now inside:
-                        if eudist.winding_number(far, close[closeindex]) != 0:
-                            dist = np.sum((far - close[closeindex]) ** 2, axis=1)
-                            close, far = far, close
-                            closeindex = np.argmin(dist)
-                        # If we are now inside the original shape again we can stop
-                        if eudist.winding_number(rz, close[closeindex]) == 0:
-                            break
-                        newdats[-1].append(close[closeindex])
-                        closeindex += step
-                        closeindex %= len(close)
-                # Plotting to debug
-                # plt.plot(*rz.T, label="org")
-                # plt.plot(*tf.T, label="fwd")
-                # plt.plot(*tb.T, label="bwd")
-                # for block, new in zip(blocks, newdats):
-                #     plt.plot(*(rz[block].T), "rx-", label="old")
-                #     plt.plot(*(np.array(new).T), "o-", label="new")
-                # plt.legend()
-                # plt.show()
-                orgrz = rz
-                rz = list(rz)
-                keepi = []
-                for block in blocks:
-                    keepi.append(block[0])
-                    keepi.append(block[-1])
-                keepi.append(keepi[0])
-                del keepi[0]
-                keeps = []
-                for a, b in zip(keepi[::2], keepi[1::2]):
-                    if b > a:
-                        keeps.append(rz[a + 1 : b])
-                    else:
-                        keeps.append(rz[a + 1 :] + rz[:b])
-                rz = []
-                for new, keep in zip(newdats, keeps):
-                    rz += new
-                    rz += keep
-                    # if block[-1] > block[0]:
-                    #     rz = rz[:block[0]] + new + rz[block[-1]+1:]
-                    # else:
-                    #     rz =
-                    #     print(block[-1], block[0])
-                    #     print(*[(block[0], block[-1]) for block in blocks])
-                    #     raise
-                rz = np.array(rz)
-                # plt.plot(*rz.T)
-                # plt.title(j)
-                outer_lines[j] = zb.rzline.line_from_points(
-                    *rz.T, spline_order=1, is_sorted=True
-                )
-                outer_lines[j] = outer_lines[j].equallySpaced(n=10 * nz)
-                # plt.show()
-            if not dochanges:
-                break
     if show_lines:
         for i in range(ny):
             plt.figure()
@@ -596,6 +493,125 @@ def W7X(
 
     if show_maps:
         zb.plot.plot_forward_map(grid, maps, yslice=-1)
+
+
+def get_inner(lines1, lines2):
+    return get_inner_outer(lines1, lines2, True)
+
+
+def get_outer(lines1, lines2):
+    return get_inner_outer(lines1, lines2, False)
+
+
+def assert_valid(line):
+    if isinstance(line, list):
+        for l in line:
+            assert_valid(l)
+        return
+    if isinstance(line, np.ndarray):
+        if len(line.shape) > 2:
+            for l in line:
+                assert_valid(l)
+            return
+        if line.shape[0] == 2:
+            x, y = line
+        else:
+            x, y = line.T
+    else:
+        x = line.R
+        y = line.Z
+    dx = x - np.roll(x, 1)
+    dy = y - np.roll(y, 1)
+    dr = dx**2 + dy**2
+    bad = dr == 0
+    if not np.any(bad):
+        return
+    print(np.sum(bad))
+    print(np.arange(len(bad))[bad])
+    plt.plot(x - 5)
+    plt.plot(y)
+    plt.plot(dx * 1000)
+    plt.plot(dy * 1000)
+    plt.show()
+    assert 0
+
+
+def get_inner_outer(lines1, lines2, io):
+    if lines2 is None:
+        return lines1
+    import shapely.geometry as sg
+
+    assert_valid(lines1)
+    assert_valid(lines2)
+
+    out = []
+    for l1, l2 in zip(lines1, lines2):
+        # print([isinstance(x, zb.rzline.RZline) for x in [l1, l2]])
+        if isinstance(l1, zb.rzline.RZline):
+            l1 = np.array([l1.R, l1.Z]).T
+        else:
+            l1 = l1.T
+        if isinstance(l2, zb.rzline.RZline):
+            l2 = np.array([l2.R, l2.Z]).T
+        else:
+            l2 = l2.T
+        nz = len(l1)
+        if nz != len(l2):
+            nz = None
+
+        ps = []
+        for li in l1, l2:
+            try:
+                pi = sg.Polygon(li)
+                assert pi.is_valid
+            except:
+                plt.plot(*li.T, "x-")
+                plt.figure()
+                plt.plot(li.T[0], "x-")
+                plt.plot(li.T[1], "o-")
+                x, y = li.T
+                dx = x - np.roll(x, 1)
+                dy = y - np.roll(y, 1)
+                plt.figure()
+                plt.scatter(dx, dy)
+                plt.show()
+                raise
+            ps.append(pi)
+        p1, p2 = ps
+
+        print([(x.is_valid, x.is_simple, x.is_ring) for x in [p1, p2]])
+        try:
+            if io:
+                res = p1.intersection(p2)
+            else:
+                res = p1.union(p2)
+            if isinstance(res, sg.MultiPolygon):
+                plt.plot(*l1.T)
+                plt.plot(*l2.T)
+                res = list(res)
+                best = None
+                for r in res:
+                    plt.plot(*np.array(r.exterior.coords).T, label=r.area)
+                    if best is None or r.area > best.area:
+                        best = r
+                plt.legend()
+                plt.show()
+                res = best
+            newrz = res.exterior.coords
+        except:
+            plt.plot(*l1.T, "x-", label="l1")
+            plt.plot(*l2.T, "x-", label="l2")
+            plt.legend()
+            plt.show()
+            raise
+
+        line = zb.rzline.line_from_points(
+            *np.array(newrz).T, spline_order=1, is_sorted=True
+        )
+        if nz:
+            line = line.equallySpaced(n=nz)
+        out.append(line)
+    return out
 
 
 def get_tracer(_cache={}):
@@ -668,7 +684,7 @@ def trace_poincare(start_r, start_z, yslices, npoints, conf, symmetry=5, step=1e
     pnts.x1 = start_r * np.cos(yslices[0])
     pnts.x2 = start_r * np.sin(yslices[0])
     pnts.x3 = start_z
-    print(pnts)
+    # print(pnts)
 
     config = flt.types.MagneticConfig()
     config.configIds = [conf]
@@ -681,34 +697,34 @@ def trace_poincare(start_r, start_z, yslices, npoints, conf, symmetry=5, step=1e
     task.step = step
     task.poincare = poincare
 
-    res = flt.service.trace(pnts, config, task, None, None)
+    dat = np.empty((2, len(yslices0), 2, symmetry, len(pnts.x1), npoints)) * np.nan
+    for i3 in 0, 1:
+        config.inverseField = bool(i3)
 
-    print(len(res.surfs))
+        res = flt.service.trace(pnts, config, task, None, None)
 
-    """ plot the points: """
-    # for i in range(0, len(res.surfs)):
-    #    plt.scatter(res.surfs[i].points.x1, res.surfs[i].points.x3, color="red", s=0.1)
-    dat = np.empty((2, len(yslices0), symmetry, len(pnts.x1), npoints)) * np.nan
-    i = 0
-    for i0 in range(len(pnts.x1)):
-        for i1 in range(len(yslices0)):
-            for i2 in range(symmetry):
-                s = res.surfs[i]
-                xyz = np.array([s.points.x1, s.points.x2, s.points.x3])
-                r = np.sqrt(np.sum(xyz[:2] ** 2, axis=0))
-                ln = len(r)
-                if ln != npoints:
-                    print(i0, i1, i2)
-                print(yslices0[i1], s.phi0 % (2 * np.pi / symmetry))
-                assert np.isclose(yslices0[i1], s.phi0 % (2 * np.pi / symmetry))
-                # print(s.phi0, l0, l0+ln)
-                dat[0, i1, i2, i0, :ln] = r
-                dat[1, i1, i2, i0, :ln] = xyz[2]
-                i += 1
+        i = 0
+        for i0 in range(len(pnts.x1)):
+            for i1 in range(len(yslices0)):
+                for i2 in range(symmetry):
+                    s = res.surfs[i]
+                    xyz = np.array([s.points.x1, s.points.x2, s.points.x3])
+                    r = np.sqrt(np.sum(xyz[:2] ** 2, axis=0))
+                    ln = len(r)
+                    if ln != npoints:
+                        print(i0, i1, i2, i3, ln, npoints)
+                    # print(yslices0[i1], s.phi0 % (2 * np.pi / symmetry))
+                    assert np.isclose(yslices0[i1], s.phi0 % (2 * np.pi / symmetry))
+                    # print(s.phi0, l0, l0+ln)
+                    dat[0, i1, i3, i2, i0, :ln] = r
+                    dat[1, i1, i3, i2, i0, :ln] = xyz[2]
+                    i += 1
     da = xr.DataArray(
         dat,
-        dims=("Rz", "phi", "symmetry", "index", "point"),
-        coords=dict(Rz=["R", "z"], phi=np.array(yslices0)),
+        dims=("Rz", "phi", "direction", "symmetry", "index", "point"),
+        coords=dict(
+            Rz=["R", "z"], phi=np.array(yslices0), direction=["forward", "backward"]
+        ),
     )
     da.attrs = dict(step=step, configuration=conf)
     # print(da)
@@ -716,8 +732,52 @@ def trace_poincare(start_r, start_z, yslices, npoints, conf, symmetry=5, step=1e
     return da
 
 
-def plot_poincare(*args):
-    da = trace_poincare(*args)
+def get_W7X_poincare(R, phi, conf, nz):
+    dat = _get_W7X_poincare(R, phi, conf)
+    out = []
+    for cur in dat.transpose("phi", ...):
+        cur = zb.rzline.RZline(*cur, smooth=True)
+        cur = cur.equallySpaced(n=nz)
+        out.append(cur)
+    return out
+
+
+def _get_W7X_poincare(R, phi, conf):
+    import xarray as xr
+
+    m = hashlib.md5()
+    m.update("-".join([str(x) for x in phi]).encode())
+
+    fn = f"w7x_poincare_{conf}_{R}_{m.hexdigest()[:10]}.cache.nc"
+    try:
+        return xr.open_dataarray(fn)
+    except FileNotFoundError:
+        pass
+
+    pnc = trace_poincare([R], [0], phi, 50, conf)
+
+    def _prod(a):
+        r = 1
+        for k in a:
+            r *= k
+        return r
+
+    newshape = (pnc.shape[0], pnc.shape[1], _prod(pnc.shape[2:]))
+    out = np.empty(newshape)
+    for i, phi in enumerate(pnc.phi):
+        rz = pnc.sel(phi=phi)
+        cur = zb.rzline.line_from_points(*[k.data.flatten() for k in rz], smooth=True)
+        out[:, i, :] = np.array([cur.R, cur.Z])
+
+    da = xr.DataArray(
+        out, dims=(*pnc.dims[:2], "points"), coords=dict(Rz=pnc["Rz"], phi=pnc["phi"])
+    )
+    da.to_netcdf(fn)
+    return out
+
+
+def plot_poincare(*args, **kw):
+    da = trace_poincare(*args, **kw)
     for phi in da.phi:
         dap = da.sel(phi=phi)
         plt.figure()
@@ -812,42 +872,26 @@ def get_W7X_vessel(phi=[0], nz=256, show=False):
     for y in range(phi.shape[0]):
         # intersection call for phi_vals=phi
         result = srv2.service.intersectMeshPhiPlane(phi[y], mset)
-        all_vertices = np.zeros((len(result), 2))
-        R = np.zeros((len(result)))
-        z = np.zeros((len(result)))
+
+        # Avoid duplicates
+        all_vertices = set()
 
         for s, i in zip(
             result, np.arange(0, len(result))
         ):  # loop over non-empty triangle intersections
             xyz = np.array((s.vertices.x1, s.vertices.x2, s.vertices.x3)).T
-            R[i] = np.sqrt(xyz[:, 0] ** 2 + xyz[:, 1] ** 2)[0]  # major radius
-            z[i] = xyz[:, 2][0]
-            all_vertices[i, :] = (R[i], z[i])
+            R = np.sqrt(xyz[:, 0] ** 2 + xyz[:, 1] ** 2)[0]  # major radius
+            z = xyz[:, 2][0]
+            all_vertices.add((R, z))
 
         # Now have all vertices of vessel, but need to put them in sensible order...
         # Done by line_from_points :-)
 
-        Path = path.Path(all_vertices, closed=True)
-        r, z = [all_vertices[:, 0], all_vertices[:, 1]]
+        r, z = np.array(list(all_vertices)).T
         line = zb.rzline.line_from_points(r, z, spline_order=1, is_sorted=False)
-        if show:
-            plt.plot(*all_vertices.T, "xr")
-
-            for o in 0, 1, 2, 3, 5:
-                plt.plot(
-                    *zb.rzline.line_from_points(r, z, spline_order=o).position(
-                        np.linspace(0, 2 * np.pi, 10 * nz)
-                    ),
-                    label=o,
-                )
-            plt.plot(*line.position(np.linspace(0, 2 * np.pi, 10 * nz)), label="before")
-            plt.plot(
-                *line.equallySpaced(n=nz).position(np.linspace(0, 2 * np.pi, 10 * nz)),
-                label="equally spaced",
-            )
-            plt.legend()
-            plt.show()
+        assert_valid(line)
         line = line.equallySpaced(n=nz)
+        assert_valid(line)
         lines.append(line)
 
     dat = [(line.R, line.Z) for line in lines]
@@ -933,9 +977,9 @@ def calc_curvilinear_curvature(fname, field, grid, maps):
     bxcvy = (dG_xdz - dG_zdx) / J
     bxcvz = (dG_ydx - dG_xdy) / J
     bxcv = (
-        g_11 * (bxcvx ** 2)
-        + g_22 * (bxcvy ** 2)
-        + g_33 * (bxcvz ** 2)
+        g_11 * (bxcvx**2)
+        + g_22 * (bxcvy**2)
+        + g_33 * (bxcvz**2)
         + 2 * (bxcvz * bxcvx * g_13)
     )
     f.write("bxcvx", bxcvx)
